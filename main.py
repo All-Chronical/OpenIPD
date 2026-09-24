@@ -105,16 +105,38 @@ def quad_score(quad):
     return (dist.min(axis=1).mean() + dist.min(axis=0).mean()) / 2
 
 
+WINDOW_NAME = "OpenIPD Alpha"
+cv2.namedWindow(WINDOW_NAME)
+
+
+def nothing(x):
+    pass
+
+
+cv2.createTrackbar("Blur", WINDOW_NAME, 3, 15, nothing)
+cv2.createTrackbar("Theta (pi/X)", WINDOW_NAME, 360, 720, nothing)
+cv2.createTrackbar("Hough Thresh", WINDOW_NAME, 70, 200, nothing)
+cv2.createTrackbar("Min Length", WINDOW_NAME, 50, 200, nothing)
+cv2.createTrackbar("Max Gap", WINDOW_NAME, 40, 150, nothing)
+
 camera = cv2.VideoCapture(0)
 
 while True:
     (ret, frame) = camera.read()
 
+    blur_val = cv2.getTrackbarPos("Blur", WINDOW_NAME)
+    k = max(1, blur_val if blur_val % 2 == 1 else blur_val + 1)
+
+    theta_div = max(1, cv2.getTrackbarPos("Theta (pi/X)", WINDOW_NAME))
+    hough_thresh = max(1, cv2.getTrackbarPos("Hough Thresh", WINDOW_NAME))
+    min_length = max(1, cv2.getTrackbarPos("Min Length", WINDOW_NAME))
+    max_gap = cv2.getTrackbarPos("Max Gap", WINDOW_NAME)
+
     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    frame = cv2.GaussianBlur(frame, (3, 3), 0)
+    frame = cv2.GaussianBlur(frame, (k, k), 0)
     frame = cv2.Canny(frame, 50, 150)
 
-    lines = cv2.HoughLinesP(frame, 1, np.pi / 360, threshold=70, minLineLength=50, maxLineGap=40)
+    lines = cv2.HoughLinesP(frame, 1, np.pi / theta_div, threshold=hough_thresh, minLineLength=min_length, maxLineGap=max_gap)
     quads = find_candidate_quads(lines)
 
     frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
