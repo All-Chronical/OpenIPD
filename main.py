@@ -2,35 +2,20 @@ import cv2
 import math
 import numpy as np
 
-REFERENCE_CARD = np.array([
-    [-42.80, -26.99],
-    [ 42.80, -26.99],
-    [ 42.80,  26.99],
-    [-42.80,  26.99]
-], dtype=np.float32)
-
-
-def line_angle(line):
-    x1, y1, x2, y2 = line
-    return math.degrees(math.atan2(y2 - y1, x2 - x1)) % 180
-
-
-def is_perpendicular(ang1, ang2, tol=10):
-    diff = abs(((ang1 - ang2 + 90) % 180) - 90)
-    return abs(diff - 90) <= tol
+CARD_RATIO = 85.60 / 53.98  # CR80 aspect ratio ~1.586
 
 
 def line_intersect(s1, s2):
     p, r = s1[:2], s1[2:] - s1[:2]
     q, s = s2[:2], s2[2:] - s2[:2]
     den = r[0] * s[1] - r[1] * s[0]
-    if abs(den) < 1e-6:
+    if abs(den) < 1e-9:
         return None
     t = ((q - p)[0] * s[1] - (q - p)[1] * s[0]) / den
     return p + t * r
 
 
-def on_segment(c, s, slack=20.0):
+def on_segment(c, s, slack=60.0):
     p, d = s[:2], s[2:] - s[:2]
     L = math.hypot(d[0], d[1])
     if L < 1e-6:
@@ -39,70 +24,110 @@ def on_segment(c, s, slack=20.0):
     return -slack / L <= t <= 1.0 + slack / L
 
 
-def find_candidate_quads(lines, slack=20.0):
-    if lines is None or len(lines) < 4:
+def find_candidate_quads(lines, min_len=40, angle_tol=7, min_gap=30, max_gap=400, corner_slack=60.0):
+    if lines is None:
         return []
-
-    segs = [l.flatten().astype(float) for l in lines]
-    angles = [line_angle(s) for s in segs]
+    seg = lines.reshape(-1, 4).astype(float)
+    length = np.hypot(seg[:, 2] - seg[:, 0], seg[:, 3] - seg[:, 1])
+    seg = seg[length >= min_len]
+    if len(seg) == 0:
+        return []
+    angle = np.degrees(np.arctan2(seg[:, 3] - seg[:, 1], seg[:, 2] - seg[:, 0])) % 180
+    mid = (seg[:, :2] + seg[:, 2:]) / 2
 
     quads = []
-    n = len(segs)
-    for i in range(n):
-        for j in range(i + 1, n):
-            if not is_perpendicular(angles[i], angles[j]):
+    for i in range(len(seg)):
+        ai = math.radians(angle[i])
+        u = np.array([math.cos(ai), math.sin(ai)])
+        n = np.array([-u[1], u[0]])
+        for j in range(i + 1, len(seg)):
+            if abs(((angle[i] - angle[j] + 90) % 180) - 90) > angle_tol:
                 continue
-            c0 = line_intersect(segs[i], segs[j])
-            if c0 is None or not (on_segment(c0, segs[i], slack) and on_segment(c0, segs[j], slack)):
+            gap = abs(n @ (mid[j] - mid[i]))
+            if not (min_gap <= gap <= max_gap):
                 continue
-
-            for k in range(i + 1, n):
-                if not is_perpendicular(angles[j], angles[k]):
+            orth = (angle[i] + 90) % 180
+            lo, hi = sorted([n @ mid[i], n @ mid[j]])
+            cross = [k for k in range(len(seg))
+                     if abs(((angle[k] - orth + 90) % 180) - 90) <= angle_tol
+                     and lo < n @ mid[k] < hi]
+            if len(cross) >= 2:
+                left = min(cross, key=lambda k: u @ mid[k])
+                right = max(cross, key=lambda k: u @ mid[k])
+                corners = [line_intersect(seg[i], seg[left]), line_intersect(seg[i], seg[right]),
+                           line_intersect(seg[j], seg[right]), line_intersect(seg[j], seg[left])]
+                if any(c is None for c in corners):
                     continue
-                c1 = line_intersect(segs[j], segs[k])
-                if c1 is None or not (on_segment(c1, segs[j], slack) and on_segment(c1, segs[k], slack)):
+                if not (all(on_segment(c, seg[i], corner_slack) for c in (corners[0], corners[1]))
+                        and all(on_segment(c, seg[j], corner_slack) for c in (corners[2], corners[3]))
+                        and all(on_segment(c, seg[left], corner_slack) for c in (corners[0], corners[3]))
+                        and all(on_segment(c, seg[right], corner_slack) for c in (corners[1], corners[2]))):
                     continue
-
-                for m in range(j + 1, n):
-                    if not is_perpendicular(angles[k], angles[m]) or not is_perpendicular(angles[m], angles[i]):
-                        continue
-                    c2 = line_intersect(segs[k], segs[m])
-                    if c2 is None or not (on_segment(c2, segs[k], slack) and on_segment(c2, segs[m], slack)):
-                        continue
-                    c3 = line_intersect(segs[m], segs[i])
-                    if c3 is None or not (on_segment(c3, segs[m], slack) and on_segment(c3, segs[i], slack)):
-                        continue
-
-                    quads.append(np.array([c0, c1, c2, c3], dtype=np.int32))
+                quads.append(np.array(corners, dtype=np.int32))
+            elif len(cross) == 1:
+                known = cross[0]
+                for d in (1.586 * gap, gap / 1.586):
+                    for sign in (+1, -1):
+                        p0 = mid[known] + sign * d * u
+                        inferred = np.array([p0 - 100 * n, p0 + 100 * n]).ravel()
+                        corners = [line_intersect(seg[i], seg[known]), line_intersect(seg[i], inferred),
+                                   line_intersect(seg[j], inferred), line_intersect(seg[j], seg[known])]
+                        if any(c is None for c in corners):
+                            continue
+                        if not (all(on_segment(c, seg[i], corner_slack) for c in (corners[0], corners[1]))
+                                and all(on_segment(c, seg[j], corner_slack) for c in (corners[2], corners[3]))
+                                and all(on_segment(c, seg[known], corner_slack) for c in (corners[0], corners[3]))):
+                            continue
+                        quads.append(np.array(corners, dtype=np.int32))
     return quads
 
 
-def normalize_quad(quad, width=85.60):
+def quad_score(quad):
     edges = [quad[(i + 1) % 4] - quad[i] for i in range(4)]
     lengths = [math.hypot(e[0], e[1]) for e in edges]
-    max_idx = int(np.argmax(lengths))
-    max_len = lengths[max_idx]
-    if max_len < 1e-6:
-        return None
-
-    vec = edges[max_idx]
-    theta = math.atan2(vec[1], vec[0])
-    rot = np.array([
-        [ math.cos(theta), math.sin(theta)],
-        [-math.sin(theta), math.cos(theta)]
-    ])
-    scale = width / max_len
-    centered = quad - quad.mean(axis=0)
-    return (centered @ rot.T) * scale
-
-
-def quad_score(quad):
-    norm = normalize_quad(quad)
-    if norm is None:
+    side_a = (lengths[0] + lengths[2]) / 2.0
+    side_b = (lengths[1] + lengths[3]) / 2.0
+    if side_a < 1e-6 or side_b < 1e-6:
         return float("inf")
-    dist = np.hypot(norm[:, None, 0] - REFERENCE_CARD[None, :, 0],
-                    norm[:, None, 1] - REFERENCE_CARD[None, :, 1])
-    return (dist.min(axis=1).mean() + dist.min(axis=0).mean()) / 2
+    ratio = max(side_a, side_b) / min(side_a, side_b)
+    return abs(ratio - CARD_RATIO)
+
+
+def suppress_overlapping_quads(quads, overlap_thresh=0.5):
+    if len(quads) <= 1:
+        return quads
+
+    sorted_quads = sorted(quads, key=cv2.contourArea, reverse=True)
+    kept = []
+    boxes = [cv2.boundingRect(q) for q in sorted_quads]
+
+    for i, q in enumerate(sorted_quads):
+        x1, y1, w1, h1 = boxes[i]
+        area1 = w1 * h1
+        if area1 == 0:
+            continue
+
+        duplicate = False
+        for k_idx in range(len(kept)):
+            x2, y2, w2, h2 = boxes[k_idx]
+            area2 = w2 * h2
+
+            xi1 = max(x1, x2)
+            yi1 = max(y1, y2)
+            xi2 = min(x1 + w1, x2 + w2)
+            yi2 = min(y1 + h1, y2 + h2)
+
+            inter = max(0, xi2 - xi1) * max(0, yi2 - yi1)
+            iou = inter / float(area1 + area2 - inter)
+
+            if iou > overlap_thresh:
+                duplicate = True
+                break
+
+        if not duplicate:
+            kept.append(q)
+
+    return kept
 
 
 WINDOW_NAME = "OpenIPD Alpha"
@@ -113,11 +138,11 @@ def nothing(x):
     pass
 
 
-cv2.createTrackbar("Blur", WINDOW_NAME, 3, 15, nothing)
-cv2.createTrackbar("Theta (pi/X)", WINDOW_NAME, 360, 720, nothing)
-cv2.createTrackbar("Hough Thresh", WINDOW_NAME, 70, 200, nothing)
-cv2.createTrackbar("Min Length", WINDOW_NAME, 50, 200, nothing)
-cv2.createTrackbar("Max Gap", WINDOW_NAME, 40, 150, nothing)
+cv2.createTrackbar("Blur", WINDOW_NAME, 9, 15, nothing)
+cv2.createTrackbar("Theta (pi/X)", WINDOW_NAME, 180, 720, nothing)
+cv2.createTrackbar("Hough Thresh", WINDOW_NAME, 50, 200, nothing)
+cv2.createTrackbar("Min Length", WINDOW_NAME, 30, 200, nothing)
+cv2.createTrackbar("Max Gap", WINDOW_NAME, 30, 150, nothing)
 
 camera = cv2.VideoCapture(0)
 
@@ -138,6 +163,7 @@ while True:
 
     lines = cv2.HoughLinesP(frame, 1, np.pi / theta_div, threshold=hough_thresh, minLineLength=min_length, maxLineGap=max_gap)
     quads = find_candidate_quads(lines)
+    quads = suppress_overlapping_quads(quads)
 
     frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
 
