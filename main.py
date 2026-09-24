@@ -130,32 +130,54 @@ def suppress_overlapping_quads(quads, overlap_thresh=0.5):
     return kept
 
 
-WINDOW_NAME = "OpenIPD Alpha"
-cv2.namedWindow(WINDOW_NAME)
+def fit_to_window(img, win_w, win_h):
+    if win_w <= 10 or win_h <= 10:
+        return img
+    h, w = img.shape[:2]
+    scale = min(win_w / w, win_h / h)
+    nw, nh = max(1, int(w * scale)), max(1, int(h * scale))
+    resized = cv2.resize(img, (nw, nh), interpolation=cv2.INTER_LINEAR)
+    canvas = np.zeros((win_h, win_w, 3), dtype=np.uint8)
+    yo = (win_h - nh) // 2
+    xo = (win_w - nw) // 2
+    canvas[yo:yo + nh, xo:xo + nw] = resized
+    return canvas
+
+
+FEED_WINDOW = "OpenIPD Alpha"
+CONTROLS_WINDOW = "Controls"
+
+cv2.namedWindow(CONTROLS_WINDOW, cv2.WINDOW_NORMAL)
+cv2.resizeWindow(CONTROLS_WINDOW, 460, 720)
+cv2.moveWindow(CONTROLS_WINDOW, 30, 30)
+
+cv2.namedWindow(FEED_WINDOW, cv2.WINDOW_NORMAL)
+cv2.resizeWindow(FEED_WINDOW, 1100, 825)
+cv2.moveWindow(FEED_WINDOW, 510, 30)
 
 
 def nothing(x):
     pass
 
 
-cv2.createTrackbar("Freeze (0/1)", WINDOW_NAME, 0, 1, nothing)
-cv2.createTrackbar("Blur", WINDOW_NAME, 8, 15, nothing)
-cv2.createTrackbar("Canny Low", WINDOW_NAME, 55, 255, nothing)
-cv2.createTrackbar("Canny High", WINDOW_NAME, 82, 255, nothing)
-cv2.createTrackbar("Theta (pi/X)", WINDOW_NAME, 549, 720, nothing)
-cv2.createTrackbar("Hough Thresh", WINDOW_NAME, 56, 200, nothing)
-cv2.createTrackbar("Min Length", WINDOW_NAME, 30, 200, nothing)
-cv2.createTrackbar("Max Gap", WINDOW_NAME, 29, 150, nothing)
-cv2.createTrackbar("Angle Tol", WINDOW_NAME, 7, 30, nothing)
-cv2.createTrackbar("Corner Slack", WINDOW_NAME, 57, 150, nothing)
-cv2.createTrackbar("Overlap (%)", WINDOW_NAME, 0, 100, nothing)
-cv2.createTrackbar("Infer 4th (0/1)", WINDOW_NAME, 1, 1, nothing)
+cv2.createTrackbar("Freeze (0/1)", CONTROLS_WINDOW, 0, 1, nothing)
+cv2.createTrackbar("Blur", CONTROLS_WINDOW, 8, 15, nothing)
+cv2.createTrackbar("Canny Low", CONTROLS_WINDOW, 55, 255, nothing)
+cv2.createTrackbar("Canny High", CONTROLS_WINDOW, 82, 255, nothing)
+cv2.createTrackbar("Theta (pi/X)", CONTROLS_WINDOW, 549, 720, nothing)
+cv2.createTrackbar("Hough Thresh", CONTROLS_WINDOW, 56, 200, nothing)
+cv2.createTrackbar("Min Length", CONTROLS_WINDOW, 30, 200, nothing)
+cv2.createTrackbar("Max Gap", CONTROLS_WINDOW, 29, 150, nothing)
+cv2.createTrackbar("Angle Tol", CONTROLS_WINDOW, 7, 30, nothing)
+cv2.createTrackbar("Corner Slack", CONTROLS_WINDOW, 57, 150, nothing)
+cv2.createTrackbar("Overlap (%)", CONTROLS_WINDOW, 0, 100, nothing)
+cv2.createTrackbar("Infer 4th (0/1)", CONTROLS_WINDOW, 1, 1, nothing)
 
 camera = cv2.VideoCapture(0)
 cached_frame = None
 
 while True:
-    freeze = cv2.getTrackbarPos("Freeze (0/1)", WINDOW_NAME)
+    freeze = cv2.getTrackbarPos("Freeze (0/1)", CONTROLS_WINDOW)
     if not freeze or cached_frame is None:
         ret, frame_read = camera.read()
         if not ret:
@@ -164,21 +186,21 @@ while True:
 
     frame = cached_frame.copy()
 
-    blur_val = cv2.getTrackbarPos("Blur", WINDOW_NAME)
+    blur_val = cv2.getTrackbarPos("Blur", CONTROLS_WINDOW)
     k = max(1, blur_val if blur_val % 2 == 1 else blur_val + 1)
 
-    canny_low = cv2.getTrackbarPos("Canny Low", WINDOW_NAME)
-    canny_high = max(canny_low + 1, cv2.getTrackbarPos("Canny High", WINDOW_NAME))
+    canny_low = cv2.getTrackbarPos("Canny Low", CONTROLS_WINDOW)
+    canny_high = max(canny_low + 1, cv2.getTrackbarPos("Canny High", CONTROLS_WINDOW))
 
-    theta_div = max(1, cv2.getTrackbarPos("Theta (pi/X)", WINDOW_NAME))
-    hough_thresh = max(1, cv2.getTrackbarPos("Hough Thresh", WINDOW_NAME))
-    min_length = max(1, cv2.getTrackbarPos("Min Length", WINDOW_NAME))
-    max_gap = cv2.getTrackbarPos("Max Gap", WINDOW_NAME)
+    theta_div = max(1, cv2.getTrackbarPos("Theta (pi/X)", CONTROLS_WINDOW))
+    hough_thresh = max(1, cv2.getTrackbarPos("Hough Thresh", CONTROLS_WINDOW))
+    min_length = max(1, cv2.getTrackbarPos("Min Length", CONTROLS_WINDOW))
+    max_gap = cv2.getTrackbarPos("Max Gap", CONTROLS_WINDOW)
 
-    angle_tol = max(1, cv2.getTrackbarPos("Angle Tol", WINDOW_NAME))
-    corner_slack = cv2.getTrackbarPos("Corner Slack", WINDOW_NAME)
-    overlap_pct = max(0, cv2.getTrackbarPos("Overlap (%)", WINDOW_NAME)) / 100.0
-    infer_4th = bool(cv2.getTrackbarPos("Infer 4th (0/1)", WINDOW_NAME))
+    angle_tol = max(1, cv2.getTrackbarPos("Angle Tol", CONTROLS_WINDOW))
+    corner_slack = cv2.getTrackbarPos("Corner Slack", CONTROLS_WINDOW)
+    overlap_pct = max(0, cv2.getTrackbarPos("Overlap (%)", CONTROLS_WINDOW)) / 100.0
+    infer_4th = bool(cv2.getTrackbarPos("Infer 4th (0/1)", CONTROLS_WINDOW))
 
     frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     frame_blur = cv2.GaussianBlur(frame_gray, (k, k), 0)
@@ -216,11 +238,18 @@ while True:
         cv2.putText(frame, "FROZEN (Press 'F' or Space to toggle)", (10, 30),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
 
-    cv2.imshow("OpenIPD Alpha", frame)
+    # Display controls panel and maximized feed window
+    controls_bg = np.zeros((10, 460, 3), dtype=np.uint8)
+    cv2.imshow(CONTROLS_WINDOW, controls_bg)
+
+    rect = cv2.getWindowImageRect(FEED_WINDOW)
+    display_frame = fit_to_window(frame, rect[2], rect[3]) if rect[2] > 10 and rect[3] > 10 else frame
+    cv2.imshow(FEED_WINDOW, display_frame)
+
     key = cv2.waitKey(1) & 0xFF
     if key == 27:
         break
     elif key in (ord('f'), ord('F'), 32):
-        curr = cv2.getTrackbarPos("Freeze (0/1)", WINDOW_NAME)
-        cv2.setTrackbarPos("Freeze (0/1)", WINDOW_NAME, 0 if curr else 1)
+        curr = cv2.getTrackbarPos("Freeze (0/1)", CONTROLS_WINDOW)
+        cv2.setTrackbarPos("Freeze (0/1)", CONTROLS_WINDOW, 0 if curr else 1)
 
