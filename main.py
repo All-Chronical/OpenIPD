@@ -24,7 +24,7 @@ def on_segment(c, s, slack=60.0):
     return -slack / L <= t <= 1.0 + slack / L
 
 
-def find_candidate_quads(lines, min_len=40, angle_tol=7, min_gap=30, max_gap=400, corner_slack=60.0):
+def find_candidate_quads(lines, min_len=40, angle_tol=7, min_gap=30, max_gap=400, corner_slack=60.0, infer_4th=False):
     if lines is None:
         return []
     seg = lines.reshape(-1, 4).astype(float)
@@ -64,7 +64,7 @@ def find_candidate_quads(lines, min_len=40, angle_tol=7, min_gap=30, max_gap=400
                         and all(on_segment(c, seg[right], corner_slack) for c in (corners[1], corners[2]))):
                     continue
                 quads.append(np.array(corners, dtype=np.int32))
-            elif len(cross) == 1:
+            elif len(cross) == 1 and infer_4th:
                 known = cross[0]
                 for d in (1.586 * gap, gap / 1.586):
                     for sign in (+1, -1):
@@ -138,34 +138,57 @@ def nothing(x):
     pass
 
 
-cv2.createTrackbar("Blur", WINDOW_NAME, 9, 15, nothing)
-cv2.createTrackbar("Theta (pi/X)", WINDOW_NAME, 180, 720, nothing)
-cv2.createTrackbar("Hough Thresh", WINDOW_NAME, 50, 200, nothing)
+cv2.createTrackbar("Freeze (0/1)", WINDOW_NAME, 0, 1, nothing)
+cv2.createTrackbar("Blur", WINDOW_NAME, 8, 15, nothing)
+cv2.createTrackbar("Canny Low", WINDOW_NAME, 55, 255, nothing)
+cv2.createTrackbar("Canny High", WINDOW_NAME, 82, 255, nothing)
+cv2.createTrackbar("Theta (pi/X)", WINDOW_NAME, 549, 720, nothing)
+cv2.createTrackbar("Hough Thresh", WINDOW_NAME, 56, 200, nothing)
 cv2.createTrackbar("Min Length", WINDOW_NAME, 30, 200, nothing)
-cv2.createTrackbar("Max Gap", WINDOW_NAME, 30, 150, nothing)
+cv2.createTrackbar("Max Gap", WINDOW_NAME, 29, 150, nothing)
+cv2.createTrackbar("Angle Tol", WINDOW_NAME, 7, 30, nothing)
+cv2.createTrackbar("Corner Slack", WINDOW_NAME, 57, 150, nothing)
+cv2.createTrackbar("Overlap (%)", WINDOW_NAME, 0, 100, nothing)
+cv2.createTrackbar("Infer 4th (0/1)", WINDOW_NAME, 1, 1, nothing)
 
 camera = cv2.VideoCapture(0)
+cached_frame = None
 
 while True:
-    (ret, frame) = camera.read()
+    freeze = cv2.getTrackbarPos("Freeze (0/1)", WINDOW_NAME)
+    if not freeze or cached_frame is None:
+        ret, frame_read = camera.read()
+        if not ret:
+            break
+        cached_frame = frame_read.copy()
+
+    frame = cached_frame.copy()
 
     blur_val = cv2.getTrackbarPos("Blur", WINDOW_NAME)
     k = max(1, blur_val if blur_val % 2 == 1 else blur_val + 1)
+
+    canny_low = cv2.getTrackbarPos("Canny Low", WINDOW_NAME)
+    canny_high = max(canny_low + 1, cv2.getTrackbarPos("Canny High", WINDOW_NAME))
 
     theta_div = max(1, cv2.getTrackbarPos("Theta (pi/X)", WINDOW_NAME))
     hough_thresh = max(1, cv2.getTrackbarPos("Hough Thresh", WINDOW_NAME))
     min_length = max(1, cv2.getTrackbarPos("Min Length", WINDOW_NAME))
     max_gap = cv2.getTrackbarPos("Max Gap", WINDOW_NAME)
 
-    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    frame = cv2.GaussianBlur(frame, (k, k), 0)
-    frame = cv2.Canny(frame, 50, 150)
+    angle_tol = max(1, cv2.getTrackbarPos("Angle Tol", WINDOW_NAME))
+    corner_slack = cv2.getTrackbarPos("Corner Slack", WINDOW_NAME)
+    overlap_pct = max(0, cv2.getTrackbarPos("Overlap (%)", WINDOW_NAME)) / 100.0
+    infer_4th = bool(cv2.getTrackbarPos("Infer 4th (0/1)", WINDOW_NAME))
 
-    lines = cv2.HoughLinesP(frame, 1, np.pi / theta_div, threshold=hough_thresh, minLineLength=min_length, maxLineGap=max_gap)
-    quads = find_candidate_quads(lines)
-    quads = suppress_overlapping_quads(quads)
+    frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    frame_blur = cv2.GaussianBlur(frame_gray, (k, k), 0)
+    frame_edges = cv2.Canny(frame_blur, canny_low, canny_high)
 
-    frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+    lines = cv2.HoughLinesP(frame_edges, 1, np.pi / theta_div, threshold=hough_thresh, minLineLength=min_length, maxLineGap=max_gap)
+    quads = find_candidate_quads(lines, min_len=min_length, angle_tol=angle_tol, corner_slack=corner_slack, infer_4th=infer_4th)
+    quads = suppress_overlapping_quads(quads, overlap_thresh=overlap_pct)
+
+    frame = cv2.cvtColor(frame_edges, cv2.COLOR_GRAY2BGR)
 
     # 1. Raw Hough lines: red
     if lines is not None:
@@ -189,7 +212,15 @@ while True:
         best_score, best_quad = scored[0]
         cv2.drawContours(frame, [best_quad.reshape(-1, 1, 2)], 0, (0, 255, 0), 3)
 
+    if freeze:
+        cv2.putText(frame, "FROZEN (Press 'F' or Space to toggle)", (10, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+
     cv2.imshow("OpenIPD Alpha", frame)
-    if cv2.waitKey(1) == 27:
+    key = cv2.waitKey(1) & 0xFF
+    if key == 27:
         break
+    elif key in (ord('f'), ord('F'), 32):
+        curr = cv2.getTrackbarPos("Freeze (0/1)", WINDOW_NAME)
+        cv2.setTrackbarPos("Freeze (0/1)", WINDOW_NAME, 0 if curr else 1)
 
