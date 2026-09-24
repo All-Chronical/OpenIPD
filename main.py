@@ -15,7 +15,7 @@ def line_angle(line):
     return math.degrees(math.atan2(y2 - y1, x2 - x1)) % 180
 
 
-def is_perpendicular(ang1, ang2, tol=15):
+def is_perpendicular(ang1, ang2, tol=10):
     diff = abs(((ang1 - ang2 + 90) % 180) - 90)
     return abs(diff - 90) <= tol
 
@@ -30,7 +30,16 @@ def line_intersect(s1, s2):
     return p + t * r
 
 
-def find_candidate_quads(lines):
+def on_segment(c, s, slack=20.0):
+    p, d = s[:2], s[2:] - s[:2]
+    L = math.hypot(d[0], d[1])
+    if L < 1e-6:
+        return False
+    t = ((c - p) @ d) / (L * L)
+    return -slack / L <= t <= 1.0 + slack / L
+
+
+def find_candidate_quads(lines, slack=20.0):
     if lines is None or len(lines) < 4:
         return []
 
@@ -43,18 +52,28 @@ def find_candidate_quads(lines):
         for j in range(i + 1, n):
             if not is_perpendicular(angles[i], angles[j]):
                 continue
+            c0 = line_intersect(segs[i], segs[j])
+            if c0 is None or not (on_segment(c0, segs[i], slack) and on_segment(c0, segs[j], slack)):
+                continue
+
             for k in range(i + 1, n):
                 if not is_perpendicular(angles[j], angles[k]):
                     continue
+                c1 = line_intersect(segs[j], segs[k])
+                if c1 is None or not (on_segment(c1, segs[j], slack) and on_segment(c1, segs[k], slack)):
+                    continue
+
                 for m in range(j + 1, n):
                     if not is_perpendicular(angles[k], angles[m]) or not is_perpendicular(angles[m], angles[i]):
                         continue
-                    c0 = line_intersect(segs[i], segs[j])
-                    c1 = line_intersect(segs[j], segs[k])
                     c2 = line_intersect(segs[k], segs[m])
+                    if c2 is None or not (on_segment(c2, segs[k], slack) and on_segment(c2, segs[m], slack)):
+                        continue
                     c3 = line_intersect(segs[m], segs[i])
-                    if all(c is not None for c in (c0, c1, c2, c3)):
-                        quads.append(np.array([c0, c1, c2, c3], dtype=np.int32))
+                    if c3 is None or not (on_segment(c3, segs[m], slack) and on_segment(c3, segs[i], slack)):
+                        continue
+
+                    quads.append(np.array([c0, c1, c2, c3], dtype=np.int32))
     return quads
 
 
@@ -92,26 +111,35 @@ while True:
     (ret, frame) = camera.read()
 
     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    frame = cv2.GaussianBlur(frame, (5, 5), 0)
+    frame = cv2.GaussianBlur(frame, (3, 3), 0)
     frame = cv2.Canny(frame, 50, 150)
 
-    lines = cv2.HoughLinesP(frame, 1, np.pi / 180, threshold=50, minLineLength=30, maxLineGap=60)
+    lines = cv2.HoughLinesP(frame, 1, np.pi / 360, threshold=70, minLineLength=50, maxLineGap=40)
     quads = find_candidate_quads(lines)
 
     frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
 
+    # 1. Raw Hough lines: red
     if lines is not None:
         for line in lines:
             x1, y1, x2, y2 = line
-            cv2.line(frame, (x1, y1), (x2, y2), (60, 60, 60), 1)
+            cv2.line(frame, (x1, y1), (x2, y2), (0, 0, 255), 1)
 
-    for q in quads:
-        cv2.drawContours(frame, [q.reshape(-1, 1, 2)], 0, (0, 255, 0), 1)
+    # 2. Candidate quads: filled blue + blue outline
+    if quads:
+        overlay = frame.copy()
+        for q in quads:
+            cv2.fillPoly(overlay, [q.reshape(-1, 1, 2)], (255, 0, 0))
+        cv2.addWeighted(overlay, 0.3, frame, 0.7, 0, frame)
 
+        for q in quads:
+            cv2.drawContours(frame, [q.reshape(-1, 1, 2)], 0, (255, 0, 0), 2)
+
+    # 3. Winner: green
     if quads:
         scored = sorted(((quad_score(q), q) for q in quads), key=lambda x: x[0])
         best_score, best_quad = scored[0]
-        cv2.drawContours(frame, [best_quad.reshape(-1, 1, 2)], 0, (0, 0, 255), 3)
+        cv2.drawContours(frame, [best_quad.reshape(-1, 1, 2)], 0, (0, 255, 0), 3)
 
     cv2.imshow("OpenIPD Alpha", frame)
     if cv2.waitKey(1) == 27:
