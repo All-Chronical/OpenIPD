@@ -1,3 +1,4 @@
+import math
 import cv2
 import numpy as np
 
@@ -91,6 +92,24 @@ def draw_debug_overlay(frame_edges, lines, quads, best_quad, left_pupil=None, ri
     if best_quad is not None:
         cv2.drawContours(debug_frame, [best_quad.reshape(-1, 1, 2)], 0, (0, 255, 0), 3)
 
+        edges = [best_quad[(i + 1) % 4] - best_quad[i] for i in range(4)]
+        lengths = [math.hypot(e[0], e[1]) for e in edges]
+        side_a = (lengths[0] + lengths[2]) / 2.0
+        side_b = (lengths[1] + lengths[3]) / 2.0
+        card_long_side = max(side_a, side_b)
+
+        cx = int(np.mean(best_quad[:, 0]))
+        cy = int(np.mean(best_quad[:, 1]))
+        cv2.putText(
+            debug_frame,
+            f"Card: {card_long_side:.1f} px",
+            (cx - 50, cy),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (0, 255, 0),
+            2,
+        )
+
     # 4. Pupils: circles + line
     if left_pupil is not None:
         cv2.circle(debug_frame, left_pupil, 4, (0, 0, 255), -1)
@@ -98,6 +117,18 @@ def draw_debug_overlay(frame_edges, lines, quads, best_quad, left_pupil=None, ri
         cv2.circle(debug_frame, right_pupil, 4, (0, 0, 255), -1)
     if left_pupil is not None and right_pupil is not None:
         cv2.line(debug_frame, left_pupil, right_pupil, (255, 255, 0), 1)
+        pupil_dist = math.hypot(right_pupil[0] - left_pupil[0], right_pupil[1] - left_pupil[1])
+        mid_x = (left_pupil[0] + right_pupil[0]) // 2
+        mid_y = (left_pupil[1] + right_pupil[1]) // 2
+        cv2.putText(
+            debug_frame,
+            f"Pupils: {pupil_dist:.1f} px",
+            (mid_x - 50, mid_y - 10),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (255, 255, 0),
+            2,
+        )
 
     if freeze:
         cv2.putText(debug_frame, "FROZEN (Press 'F' or Space to toggle)", (10, 30),
