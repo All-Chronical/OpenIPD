@@ -2,6 +2,7 @@ import cv2
 import CamFilters
 import CR80Detect
 import DebugWindow
+import PupilDetect
 
 
 def main():
@@ -41,9 +42,18 @@ def main():
             infer_4th=ctrls["infer_4th"],
         )
 
+        # Pupil detection
+        left_pupil, right_pupil = PupilDetect.detect_pupils(frame)
+
         # Debug visualization
         debug_frame = DebugWindow.draw_debug_overlay(
-            frame_edges, lines, quads, best_quad, freeze=ctrls["freeze"]
+            frame_edges,
+            lines,
+            quads,
+            best_quad,
+            left_pupil=left_pupil,
+            right_pupil=right_pupil,
+            freeze=ctrls["freeze"],
         )
         DebugWindow.show(debug_frame)
 
@@ -55,7 +65,6 @@ def main():
 
     camera.release()
     cv2.destroyAllWindows()
-
 
 if __name__ == "__main__":
     main()

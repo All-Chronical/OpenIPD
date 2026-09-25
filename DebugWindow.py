@@ -68,7 +68,7 @@ def fit_to_window(img, win_w, win_h):
     return canvas
 
 
-def draw_debug_overlay(frame_edges, lines, quads, best_quad, freeze=False):
+def draw_debug_overlay(frame_edges, lines, quads, best_quad, left_pupil=None, right_pupil=None, freeze=False):
     debug_frame = cv2.cvtColor(frame_edges, cv2.COLOR_GRAY2BGR)
 
     # 1. Raw Hough lines: red
@@ -90,6 +90,14 @@ def draw_debug_overlay(frame_edges, lines, quads, best_quad, freeze=False):
     # 3. Winner: green
     if best_quad is not None:
         cv2.drawContours(debug_frame, [best_quad.reshape(-1, 1, 2)], 0, (0, 255, 0), 3)
+
+    # 4. Pupils: circles + line
+    if left_pupil is not None:
+        cv2.circle(debug_frame, left_pupil, 4, (0, 0, 255), -1)
+    if right_pupil is not None:
+        cv2.circle(debug_frame, right_pupil, 4, (0, 0, 255), -1)
+    if left_pupil is not None and right_pupil is not None:
+        cv2.line(debug_frame, left_pupil, right_pupil, (255, 255, 0), 1)
 
     if freeze:
         cv2.putText(debug_frame, "FROZEN (Press 'F' or Space to toggle)", (10, 30),
