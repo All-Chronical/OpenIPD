@@ -81,6 +81,8 @@ def main():
             break
         elif key in (ord('f'), ord('F'), 32):
             DebugWindow.toggle_freeze()
+        elif key in (ord('c'), ord('C')):
+            DebugWindow.toggle_calibrate()
 
     camera.release()
     cv2.destroyAllWindows()
