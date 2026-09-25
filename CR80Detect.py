@@ -3,6 +3,7 @@ import cv2
 import numpy as np
 
 CARD_RATIO = 85.60 / 53.98  # CR80 aspect ratio ~1.586
+CR80_LONG_SIDE_MM = 85.60
 
 
 def line_intersect(s1, s2):

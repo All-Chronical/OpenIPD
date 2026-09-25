@@ -93,6 +93,7 @@ def draw_debug_overlay(frame_edges, lines, quads, best_quad, left_pupil=None, ri
         for q in quads:
             cv2.drawContours(debug_frame, [q.reshape(-1, 1, 2)], 0, (255, 0, 0), 2)
 
+    card_long_side = None
     # 3. Winner: green
     if best_quad is not None:
         cv2.drawContours(debug_frame, [best_quad.reshape(-1, 1, 2)], 0, (0, 255, 0), 3)
@@ -115,7 +116,7 @@ def draw_debug_overlay(frame_edges, lines, quads, best_quad, left_pupil=None, ri
             2,
         )
 
-    # 4. Pupils: circles + line
+    # 4. Pupils: circles + line + IPD measurement
     if left_pupil is not None:
         cv2.circle(debug_frame, left_pupil, 4, (0, 0, 255), -1)
     if right_pupil is not None:
@@ -125,15 +126,28 @@ def draw_debug_overlay(frame_edges, lines, quads, best_quad, left_pupil=None, ri
         pupil_dist = math.hypot(right_pupil[0] - left_pupil[0], right_pupil[1] - left_pupil[1])
         mid_x = (left_pupil[0] + right_pupil[0]) // 2
         mid_y = (left_pupil[1] + right_pupil[1]) // 2
+
         cv2.putText(
             debug_frame,
             f"Pupils: {pupil_dist:.1f} px",
-            (mid_x - 50, mid_y - 10),
+            (mid_x - 50, mid_y - 12),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.6,
+            0.55,
             (255, 255, 0),
             2,
         )
+
+        if card_long_side and card_long_side > 1e-3:
+            ipd_mm = (pupil_dist / card_long_side) * 85.60
+            cv2.putText(
+                debug_frame,
+                f"IPD: {ipd_mm:.1f} mm",
+                (mid_x - 60, mid_y + 30),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.85,
+                (0, 255, 255),
+                2,
+            )
 
     if freeze:
         cv2.putText(debug_frame, "FROZEN (Press 'F' or Space to toggle)", (10, 30),
