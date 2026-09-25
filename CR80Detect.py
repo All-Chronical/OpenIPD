@@ -25,6 +25,71 @@ def on_segment(c, s, slack=60.0):
     return -slack / L <= t <= 1.0 + slack / L
 
 
+def order_corners(pts):
+    pts = pts.reshape(4, 2).astype(np.float32)
+    center = np.mean(pts, axis=0)
+    angles = np.arctan2(pts[:, 1] - center[1], pts[:, 0] - center[0])
+    pts = pts[np.argsort(angles)]
+    sums = pts[:, 0] + pts[:, 1]
+    tl_idx = np.argmin(sums)
+    pts = np.roll(pts, -tl_idx, axis=0)
+    if pts[1, 0] < pts[3, 0]:
+        pts = pts[[0, 3, 2, 1]]
+    return pts
+
+
+def get_perspective_flattened_long_side(quad):
+    """
+    Computes the true unwarped/perspective-flattened long side of a CR80 card.
+    Accounts for projective foreshortening (pitch and yaw tilt) using the harmonic
+    mean of opposing edges and the known CR80 aspect ratio (1.5858).
+    """
+    if quad is None:
+        return None
+    pts = order_corners(quad)
+    tl, tr, br, bl = pts
+
+    w_top = np.linalg.norm(tr - tl)
+    w_bot = np.linalg.norm(br - bl)
+    h_left = np.linalg.norm(bl - tl)
+    h_right = np.linalg.norm(br - tr)
+
+    # Harmonic mean gives perspective-invariant length at card center depth
+    w_proj = 2.0 * w_top * w_bot / max(1e-6, w_top + w_bot)
+    h_proj = 2.0 * h_left * h_right / max(1e-6, h_left + h_right)
+
+    if w_proj >= h_proj:
+        # Card is horizontal: width is long side
+        observed_ratio = w_proj / max(1e-6, h_proj)
+        if observed_ratio >= CARD_RATIO:
+            # Pitch tilt (forehead slope): height is foreshortened, width is true scale
+            return float(w_proj)
+        else:
+            # Yaw tilt: width is foreshortened, height * ratio gives true frontal width
+            return float(h_proj * CARD_RATIO)
+    else:
+        # Card is vertical: height is long side
+        observed_ratio = h_proj / max(1e-6, w_proj)
+        if observed_ratio >= CARD_RATIO:
+            return float(h_proj)
+        else:
+            return float(w_proj * CARD_RATIO)
+
+
+def find_contour_quads(frame_edges, min_area=1500):
+    contours, _ = cv2.findContours(frame_edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+    quads = []
+    for cnt in contours:
+        area = cv2.contourArea(cnt)
+        if area < min_area:
+            continue
+        peri = cv2.arcLength(cnt, True)
+        approx = cv2.approxPolyDP(cnt, 0.035 * peri, True)
+        if len(approx) == 4 and cv2.isContourConvex(approx):
+            quads.append(approx.reshape(4, 2).astype(np.int32))
+    return quads
+
+
 def find_candidate_quads(lines, min_len=40, angle_tol=7, min_gap=30, max_gap=400, corner_slack=60.0, infer_4th=False):
     if lines is None:
         return []
@@ -131,14 +196,52 @@ def suppress_overlapping_quads(quads, overlap_thresh=0.5):
     return kept
 
 
-def detect_cr80(frame_edges, theta_div=549, hough_thresh=56, min_length=30, max_gap=29, angle_tol=7, corner_slack=57, overlap_pct=0.0, infer_4th=True):
-    lines = cv2.HoughLinesP(frame_edges, 1, np.pi / theta_div, threshold=hough_thresh, minLineLength=min_length, maxLineGap=max_gap)
-    quads = find_candidate_quads(lines, min_len=min_length, angle_tol=angle_tol, corner_slack=corner_slack, infer_4th=infer_4th)
-    quads = suppress_overlapping_quads(quads, overlap_thresh=overlap_pct)
+class CardTracker:
+    def __init__(self, alpha=0.35, max_missing_frames=5):
+        self.alpha = alpha
+        self.max_missing = max_missing_frames
+        self.missing_count = 0
+        self.smoothed_quad = None
 
-    best_quad = None
+    def update(self, detected_quad):
+        if detected_quad is not None:
+            ordered = order_corners(detected_quad)
+            if self.smoothed_quad is None:
+                self.smoothed_quad = ordered
+            else:
+                self.smoothed_quad = self.alpha * ordered + (1.0 - self.alpha) * self.smoothed_quad
+            self.missing_count = 0
+            return self.smoothed_quad.astype(np.int32)
+        else:
+            if self.smoothed_quad is not None and self.missing_count < self.max_missing:
+                self.missing_count += 1
+                return self.smoothed_quad.astype(np.int32)
+            else:
+                self.smoothed_quad = None
+                return None
+
+
+_card_tracker = CardTracker(alpha=0.35, max_missing_frames=5)
+
+
+def detect_cr80(frame_edges, theta_div=549, hough_thresh=56, min_length=30, max_gap=29, angle_tol=7, corner_slack=57, overlap_pct=0.0, infer_4th=True):
+    # 1. Closed contour quad candidates (stable, unbroken edges)
+    contour_quads = find_contour_quads(frame_edges, min_area=1500)
+
+    # 2. Hough line quad candidates
+    lines = cv2.HoughLinesP(frame_edges, 1, np.pi / theta_div, threshold=hough_thresh, minLineLength=min_length, maxLineGap=max_gap)
+    hough_quads = find_candidate_quads(lines, min_len=min_length, angle_tol=angle_tol, corner_slack=corner_slack, infer_4th=infer_4th)
+
+    # Combine candidates and remove duplicates
+    all_quads = contour_quads + hough_quads
+    quads = suppress_overlapping_quads(all_quads, overlap_thresh=overlap_pct)
+
+    raw_best = None
     if quads:
         scored = sorted(((quad_score(q), q) for q in quads), key=lambda x: x[0])
-        best_score, best_quad = scored[0]
+        best_score, raw_best = scored[0]
 
-    return lines, quads, best_quad
+    # Temporal smoothing and persistence to eliminate frame flickering
+    stable_best = _card_tracker.update(raw_best)
+
+    return lines, quads, stable_best

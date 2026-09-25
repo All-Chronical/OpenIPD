@@ -2,6 +2,7 @@ import os
 import urllib.request
 import cv2
 import mediapipe as mp
+import numpy as np
 
 MODEL_FILENAME = "face_landmarker.task"
 MODEL_URL = "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task"
@@ -73,11 +74,57 @@ class PupilDetector:
         self.landmarker.close()
 
 
+class PupilTracker:
+    def __init__(self, alpha=0.4, max_missing=4):
+        self.alpha = alpha
+        self.max_missing = max_missing
+        self.missing_count = 0
+        self.smooth_left = None
+        self.smooth_right = None
+        self.smooth_roi = None
+
+    def update(self, left, right, roi):
+        if left is not None and right is not None:
+            left_arr = np.array(left, dtype=np.float32)
+            right_arr = np.array(right, dtype=np.float32)
+            roi_arr = np.array(roi, dtype=np.float32) if roi is not None else None
+
+            if self.smooth_left is None:
+                self.smooth_left = left_arr
+                self.smooth_right = right_arr
+                self.smooth_roi = roi_arr
+            else:
+                self.smooth_left = self.alpha * left_arr + (1.0 - self.alpha) * self.smooth_left
+                self.smooth_right = self.alpha * right_arr + (1.0 - self.alpha) * self.smooth_right
+                if roi_arr is not None:
+                    self.smooth_roi = 0.25 * roi_arr + 0.75 * self.smooth_roi
+
+            self.missing_count = 0
+            sl = (int(round(self.smooth_left[0])), int(round(self.smooth_left[1])))
+            sr = (int(round(self.smooth_right[0])), int(round(self.smooth_right[1])))
+            s_roi = tuple(map(int, np.round(self.smooth_roi))) if self.smooth_roi is not None else None
+            return sl, sr, s_roi
+        else:
+            if self.smooth_left is not None and self.missing_count < self.max_missing:
+                self.missing_count += 1
+                sl = (int(round(self.smooth_left[0])), int(round(self.smooth_left[1])))
+                sr = (int(round(self.smooth_right[0])), int(round(self.smooth_right[1])))
+                s_roi = tuple(map(int, np.round(self.smooth_roi))) if self.smooth_roi is not None else None
+                return sl, sr, s_roi
+            else:
+                self.smooth_left = None
+                self.smooth_right = None
+                self.smooth_roi = None
+                return None, None, None
+
+
 _detector = None
+_pupil_tracker = PupilTracker(alpha=0.4, max_missing=4)
 
 
 def detect_pupils(frame):
     global _detector
     if _detector is None:
         _detector = PupilDetector()
-    return _detector.detect_pupils(frame)
+    raw_left, raw_right, raw_roi = _detector.detect_pupils(frame)
+    return _pupil_tracker.update(raw_left, raw_right, raw_roi)

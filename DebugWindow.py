@@ -1,9 +1,23 @@
 import math
 import cv2
 import numpy as np
+import CR80Detect
 
 FEED_WINDOW = "OpenIPD Alpha"
 CONTROLS_WINDOW = "Controls"
+
+_smoothed_ipd = None
+
+
+def get_smoothed_ipd(raw_ipd, alpha=0.25):
+    global _smoothed_ipd
+    if raw_ipd is None:
+        return None
+    if _smoothed_ipd is None:
+        _smoothed_ipd = raw_ipd
+    else:
+        _smoothed_ipd = alpha * raw_ipd + (1.0 - alpha) * _smoothed_ipd
+    return _smoothed_ipd
 
 
 def nothing(x):
@@ -98,18 +112,15 @@ def draw_debug_overlay(frame_edges, lines, quads, best_quad, left_pupil=None, ri
     if best_quad is not None:
         cv2.drawContours(debug_frame, [best_quad.reshape(-1, 1, 2)], 0, (0, 255, 0), 3)
 
-        edges = [best_quad[(i + 1) % 4] - best_quad[i] for i in range(4)]
-        lengths = [math.hypot(e[0], e[1]) for e in edges]
-        side_a = (lengths[0] + lengths[2]) / 2.0
-        side_b = (lengths[1] + lengths[3]) / 2.0
-        card_long_side = max(side_a, side_b)
+        # Perspective normalized long side
+        card_long_side = CR80Detect.get_perspective_flattened_long_side(best_quad)
 
         cx = int(np.mean(best_quad[:, 0]))
         cy = int(np.mean(best_quad[:, 1]))
         cv2.putText(
             debug_frame,
-            f"Card: {card_long_side:.1f} px",
-            (cx - 50, cy),
+            f"Card (flat): {card_long_side:.1f} px",
+            (cx - 65, cy),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.6,
             (0, 255, 0),
@@ -138,7 +149,8 @@ def draw_debug_overlay(frame_edges, lines, quads, best_quad, left_pupil=None, ri
         )
 
         if card_long_side and card_long_side > 1e-3:
-            ipd_mm = (pupil_dist / card_long_side) * 85.60
+            raw_ipd_mm = (pupil_dist / card_long_side) * CR80Detect.CR80_LONG_SIDE_MM
+            ipd_mm = get_smoothed_ipd(raw_ipd_mm)
             cv2.putText(
                 debug_frame,
                 f"IPD: {ipd_mm:.1f} mm",
