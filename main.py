@@ -29,7 +29,14 @@ def main():
             canny_high=ctrls["canny_high"],
         )
 
-        # CR80 card detection
+        # Pupil and face/forehead ROI detection
+        left_pupil, right_pupil, face_roi = PupilDetect.detect_pupils(frame)
+
+        # Mask edges outside face/forehead to eliminate background clutter
+        if face_roi is not None:
+            frame_edges = CamFilters.apply_roi_mask(frame_edges, face_roi)
+
+        # CR80 card detection (constrained to ROI)
         lines, quads, best_quad = CR80Detect.detect_cr80(
             frame_edges,
             theta_div=ctrls["theta_div"],
@@ -42,9 +49,6 @@ def main():
             infer_4th=ctrls["infer_4th"],
         )
 
-        # Pupil detection
-        left_pupil, right_pupil = PupilDetect.detect_pupils(frame)
-
         # Debug visualization
         debug_frame = DebugWindow.draw_debug_overlay(
             frame_edges,
@@ -53,6 +57,7 @@ def main():
             best_quad,
             left_pupil=left_pupil,
             right_pupil=right_pupil,
+            face_roi=face_roi,
             freeze=ctrls["freeze"],
         )
         DebugWindow.show(debug_frame)

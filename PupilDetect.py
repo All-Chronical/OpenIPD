@@ -40,7 +40,7 @@ class PupilDetector:
 
         result = self.landmarker.detect(mp_image)
         if not result.face_landmarks:
-            return None, None
+            return None, None, None
 
         landmarks = result.face_landmarks[0]
         left_p = landmarks[LEFT_PUPIL_INDEX]
@@ -49,7 +49,25 @@ class PupilDetector:
         left_pupil = (int(left_p.x * w), int(left_p.y * h))
         right_pupil = (int(right_p.x * w), int(right_p.y * h))
 
-        return left_pupil, right_pupil
+        # Compute face/forehead bounding ROI for card detection
+        xs = [int(p.x * w) for p in landmarks]
+        ys = [int(p.y * h) for p in landmarks]
+        x_min, x_max = min(xs), max(xs)
+        y_min, y_max = min(ys), max(ys)
+        face_h = y_max - y_min
+        face_w = x_max - x_min
+
+        # Add forehead and side margins to comfortably enclose a card
+        top_margin = int(face_h * 0.35)
+        side_margin = int(face_w * 0.15)
+        face_roi = (
+            max(0, x_min - side_margin),
+            max(0, y_min - top_margin),
+            min(w, x_max + side_margin),
+            min(h, y_max),
+        )
+
+        return left_pupil, right_pupil, face_roi
 
     def close(self):
         self.landmarker.close()
@@ -63,4 +81,3 @@ def detect_pupils(frame):
     if _detector is None:
         _detector = PupilDetector()
     return _detector.detect_pupils(frame)
-

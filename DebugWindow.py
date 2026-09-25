@@ -69,8 +69,13 @@ def fit_to_window(img, win_w, win_h):
     return canvas
 
 
-def draw_debug_overlay(frame_edges, lines, quads, best_quad, left_pupil=None, right_pupil=None, freeze=False):
+def draw_debug_overlay(frame_edges, lines, quads, best_quad, left_pupil=None, right_pupil=None, face_roi=None, freeze=False):
     debug_frame = cv2.cvtColor(frame_edges, cv2.COLOR_GRAY2BGR)
+
+    # Face / forehead ROI outline: yellow
+    if face_roi is not None:
+        rx1, ry1, rx2, ry2 = face_roi
+        cv2.rectangle(debug_frame, (rx1, ry1), (rx2, ry2), (255, 200, 0), 1)
 
     # 1. Raw Hough lines: red
     if lines is not None:
