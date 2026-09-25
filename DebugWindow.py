@@ -34,15 +34,15 @@ def setup_windows():
     cv2.moveWindow(FEED_WINDOW, 510, 30)
 
     cv2.createTrackbar("Freeze (0/1)", CONTROLS_WINDOW, 0, 1, nothing)
-    cv2.createTrackbar("Blur", CONTROLS_WINDOW, 8, 15, nothing)
-    cv2.createTrackbar("Canny Low", CONTROLS_WINDOW, 55, 255, nothing)
-    cv2.createTrackbar("Canny High", CONTROLS_WINDOW, 82, 255, nothing)
+    cv2.createTrackbar("Blur", CONTROLS_WINDOW, 7, 15, nothing)
+    cv2.createTrackbar("Canny Low", CONTROLS_WINDOW, 35, 255, nothing)
+    cv2.createTrackbar("Canny High", CONTROLS_WINDOW, 70, 255, nothing)
     cv2.createTrackbar("Theta (pi/X)", CONTROLS_WINDOW, 549, 720, nothing)
-    cv2.createTrackbar("Hough Thresh", CONTROLS_WINDOW, 56, 200, nothing)
-    cv2.createTrackbar("Min Length", CONTROLS_WINDOW, 30, 200, nothing)
-    cv2.createTrackbar("Max Gap", CONTROLS_WINDOW, 29, 150, nothing)
+    cv2.createTrackbar("Hough Thresh", CONTROLS_WINDOW, 42, 200, nothing)
+    cv2.createTrackbar("Min Length", CONTROLS_WINDOW, 20, 200, nothing)
+    cv2.createTrackbar("Max Gap", CONTROLS_WINDOW, 25, 150, nothing)
     cv2.createTrackbar("Angle Tol", CONTROLS_WINDOW, 7, 30, nothing)
-    cv2.createTrackbar("Corner Slack", CONTROLS_WINDOW, 57, 150, nothing)
+    cv2.createTrackbar("Corner Slack", CONTROLS_WINDOW, 150, 250, nothing)
     cv2.createTrackbar("Overlap (%)", CONTROLS_WINDOW, 0, 100, nothing)
     cv2.createTrackbar("Infer 4th (0/1)", CONTROLS_WINDOW, 1, 1, nothing)
 
@@ -83,7 +83,7 @@ def fit_to_window(img, win_w, win_h):
     return canvas
 
 
-def draw_debug_overlay(frame_edges, lines, quads, best_quad, left_pupil=None, right_pupil=None, face_roi=None, freeze=False):
+def draw_debug_overlay(frame_edges, lines, quads, best_quad, left_pupil=None, right_pupil=None, face_roi=None, depth_offset=0.0, freeze=False):
     debug_frame = cv2.cvtColor(frame_edges, cv2.COLOR_GRAY2BGR)
 
     # Face / forehead ROI outline: yellow
@@ -149,8 +149,8 @@ def draw_debug_overlay(frame_edges, lines, quads, best_quad, left_pupil=None, ri
         )
 
         if card_long_side and card_long_side > 1e-3:
-            raw_ipd_mm = (pupil_dist / card_long_side) * CR80Detect.CR80_LONG_SIDE_MM
-            ipd_mm = get_smoothed_ipd(raw_ipd_mm)
+            calibrated_ipd = CR80Detect.compute_calibrated_ipd(pupil_dist, card_long_side, depth_offset=depth_offset)
+            ipd_mm = get_smoothed_ipd(calibrated_ipd)
             cv2.putText(
                 debug_frame,
                 f"IPD: {ipd_mm:.1f} mm",

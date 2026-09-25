@@ -41,7 +41,7 @@ class PupilDetector:
 
         result = self.landmarker.detect(mp_image)
         if not result.face_landmarks:
-            return None, None, None
+            return None, None, None, 0.0
 
         landmarks = result.face_landmarks[0]
         left_p = landmarks[LEFT_PUPIL_INDEX]
@@ -50,25 +50,29 @@ class PupilDetector:
         left_pupil = (int(left_p.x * w), int(left_p.y * h))
         right_pupil = (int(right_p.x * w), int(right_p.y * h))
 
-        # Compute face/forehead bounding ROI for card detection
+        # Relative depth offset between pupils and mid-forehead (landmark 151)
+        # Closer forehead to camera -> positive depth_offset
+        pupil_z = (left_p.z + right_p.z) / 2.0
+        mid_forehead_z = landmarks[151].z
+        depth_offset = max(0.0, float(pupil_z - mid_forehead_z))
+
+        # Compute forehead ROI strictly above pupils to eliminate face/nose clutter
         xs = [int(p.x * w) for p in landmarks]
         ys = [int(p.y * h) for p in landmarks]
         x_min, x_max = min(xs), max(xs)
-        y_min, y_max = min(ys), max(ys)
-        face_h = y_max - y_min
         face_w = x_max - x_min
+        side_margin = int(face_w * 0.20)
+        eyebrow_y = min(left_pupil[1], right_pupil[1]) - 12
+        top_y = max(0, int(min(ys) - face_w * 0.40))
 
-        # Add forehead and side margins to comfortably enclose a card
-        top_margin = int(face_h * 0.35)
-        side_margin = int(face_w * 0.15)
-        face_roi = (
+        forehead_roi = (
             max(0, x_min - side_margin),
-            max(0, y_min - top_margin),
+            top_y,
             min(w, x_max + side_margin),
-            min(h, y_max),
+            max(0, eyebrow_y),
         )
 
-        return left_pupil, right_pupil, face_roi
+        return left_pupil, right_pupil, forehead_roi, depth_offset
 
     def close(self):
         self.landmarker.close()
@@ -82,8 +86,9 @@ class PupilTracker:
         self.smooth_left = None
         self.smooth_right = None
         self.smooth_roi = None
+        self.smooth_depth = 0.0
 
-    def update(self, left, right, roi):
+    def update(self, left, right, roi, depth_offset=0.0):
         if left is not None and right is not None:
             left_arr = np.array(left, dtype=np.float32)
             right_arr = np.array(right, dtype=np.float32)
@@ -93,9 +98,11 @@ class PupilTracker:
                 self.smooth_left = left_arr
                 self.smooth_right = right_arr
                 self.smooth_roi = roi_arr
+                self.smooth_depth = depth_offset
             else:
                 self.smooth_left = self.alpha * left_arr + (1.0 - self.alpha) * self.smooth_left
                 self.smooth_right = self.alpha * right_arr + (1.0 - self.alpha) * self.smooth_right
+                self.smooth_depth = self.alpha * depth_offset + (1.0 - self.alpha) * self.smooth_depth
                 if roi_arr is not None:
                     self.smooth_roi = 0.25 * roi_arr + 0.75 * self.smooth_roi
 
@@ -103,19 +110,20 @@ class PupilTracker:
             sl = (int(round(self.smooth_left[0])), int(round(self.smooth_left[1])))
             sr = (int(round(self.smooth_right[0])), int(round(self.smooth_right[1])))
             s_roi = tuple(map(int, np.round(self.smooth_roi))) if self.smooth_roi is not None else None
-            return sl, sr, s_roi
+            return sl, sr, s_roi, float(self.smooth_depth)
         else:
             if self.smooth_left is not None and self.missing_count < self.max_missing:
                 self.missing_count += 1
                 sl = (int(round(self.smooth_left[0])), int(round(self.smooth_left[1])))
                 sr = (int(round(self.smooth_right[0])), int(round(self.smooth_right[1])))
                 s_roi = tuple(map(int, np.round(self.smooth_roi))) if self.smooth_roi is not None else None
-                return sl, sr, s_roi
+                return sl, sr, s_roi, float(self.smooth_depth)
             else:
                 self.smooth_left = None
                 self.smooth_right = None
                 self.smooth_roi = None
-                return None, None, None
+                self.smooth_depth = 0.0
+                return None, None, None, 0.0
 
 
 _detector = None
@@ -126,5 +134,5 @@ def detect_pupils(frame):
     global _detector
     if _detector is None:
         _detector = PupilDetector()
-    raw_left, raw_right, raw_roi = _detector.detect_pupils(frame)
-    return _pupil_tracker.update(raw_left, raw_right, raw_roi)
+    raw_left, raw_right, raw_roi, raw_depth = _detector.detect_pupils(frame)
+    return _pupil_tracker.update(raw_left, raw_right, raw_roi, raw_depth)
