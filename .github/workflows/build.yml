@@ -62,8 +62,10 @@ jobs:
         shell: bash
         run: |
           pyinstaller --noconfirm --clean OpenIPD.spec
-          mkdir -p AppDir/usr/bin/OpenIPD AppDir/usr/share/applications
+          mkdir -p AppDir/usr/bin/OpenIPD AppDir/usr/share/applications AppDir/usr/share/icons/hicolor/scalable/apps
           cp -a dist/OpenIPD/. AppDir/usr/bin/OpenIPD/
+          cp packaging/openipd.svg AppDir/openipd.svg
+          cp packaging/openipd.svg AppDir/usr/share/icons/hicolor/scalable/apps/openipd.svg
           cat > AppDir/AppRun <<'EOF'
           #!/bin/sh
           HERE="$(dirname "$(readlink -f "$0")")"
@@ -75,7 +77,8 @@ jobs:
           Type=Application
           Name=OpenIPD
           Exec=AppRun
-          Categories=Utility;Education;
+          Icon=openipd
+          Categories=Utility;
           Terminal=false
           EOF
           cp AppDir/openipd.desktop AppDir/usr/share/applications/openipd.desktop
