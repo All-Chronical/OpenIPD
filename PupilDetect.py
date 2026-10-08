@@ -1,4 +1,5 @@
 import os
+import sys
 import urllib.request
 import cv2
 import mediapipe as mp
@@ -13,7 +14,9 @@ RIGHT_PUPIL_INDEX = 473
 
 
 def ensure_model_exists():
-    model_dir = os.path.dirname(os.path.abspath(__file__))
+    # In PyInstaller builds, bundled data is under _MEIPASS in both one-file
+    # and one-folder modes. In source runs, keep the model next to this module.
+    model_dir = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
     model_path = os.path.join(model_dir, MODEL_FILENAME)
     if not os.path.exists(model_path):
         print(f"Downloading {MODEL_FILENAME}...")
