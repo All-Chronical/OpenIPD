@@ -1,0 +1,84 @@
+name: Build and release
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.os }} / ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: Linux
+            arch: x64
+            runner: ubuntu-24.04
+          - os: Windows
+            arch: x64
+            runner: windows-2025
+          - os: Windows
+            arch: ARM64
+            runner: windows-11-arm
+          - os: Linux
+            arch: ARM64
+            runner: ubuntu-24.04-arm
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        shell: bash
+        run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt
+
+      - name: Verify imports and source syntax
+        run: |
+          python -m compileall -q .
+          python -c "import cv2, mediapipe, numpy; print('OpenIPD dependencies imported successfully')"
+
+      - name: Package source and model
+        shell: bash
+        run: |
+          mkdir -p dist
+          tar -czf "dist/OpenIPD-${{ matrix.os }}-${{ matrix.arch }}.tar.gz" \
+            main.py CamFilters.py CR80Detect.py DebugWindow.py PupilDetect.py \
+            face_landmarker.task requirements.txt README.md
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenIPD-${{ matrix.os }}-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download all platform packages
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: dist/*
