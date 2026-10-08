@@ -25,9 +25,6 @@ jobs:
           - os: Windows
             arch: x64
             runner: windows-2025
-          - os: Windows
-            arch: ARM64
-            runner: windows-11-arm
           - os: Linux
             arch: ARM64
             runner: ubuntu-24.04-arm
